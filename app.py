@@ -214,35 +214,58 @@ Be informative but short.
 
 
 # ======================================================
-# 8️⃣ PIPELINE
+# 8️⃣ STREAMLIT APP
 # ======================================================
-news_list = get_top_international_news()
-events = fetch_events()
 
-for i, news in enumerate(news_list, 1):
-    print("\n==============================")
-    print(f"NEWS #{i}\n{news}")
+st.title("Polymarket News Sentiment Dashboard")
+st.write("Fetch news → match Polymarket events → analyze public sentiment")
 
-    top_events = top3_events_for_news(news, events)
+if st.button("Run Analysis"):
+    with st.spinner("Fetching data..."):
+        news_list = get_top_international_news()
+        events = fetch_events()
 
-    # Run sentiment analysis for each event group
-    for ev in top_events:
-        keywords = get_keywords_from_gemini(ev["title"])
-        tweets = []
-        for kw in keywords:
-            tweets.extend(fetch_tweets(kw))
-        ev["gemini_sentiment"] = analyze_with_gemini(ev["title"], tweets)
+    if not news_list:
+        st.error("No news loaded. Check News API.")
+    if not events:
+        st.error("No Polymarket events loaded.")
 
-        print(f"\nEvent Group: {ev['title']}")
-        print(f"Similarity Score: {ev['similarity']:.3f}")
-        for m in ev["markets"]:
-            print(f"  - {m['question']}")
-            print(f"    Volume: ${float(m['volume']):,.0f}")
-            print(f"    End: {m['endDate']}")
-            print(f"    Odds: {m['formatted_odds']}")
-        print(f"\nGemini Sentiment Analysis:\n{ev['gemini_sentiment']}")
+    for i, news in enumerate(news_list, 1):
+        st.markdown("---")
+        st.subheader(f"📰 NEWS #{i}")
+        st.write(news)
 
-    # Overall insight per news
-    overall_insight = overall_news_insight(news, top_events)
-    print("\n=========== Combined Gemini Insight ==========")
-    print(overall_insight)
+        top_events = top3_events_for_news(news, events)
+
+        if not top_events:
+            st.write("No strongly related Polymarket markets found.")
+            continue
+
+        # Run sentiment analysis for each event group
+        for ev in top_events:
+            with st.spinner(f"Analyzing: {ev['title']}"):
+                keywords = get_keywords_from_gemini(ev["title"])
+                tweets = []
+                for kw in keywords:
+                    tweets.extend(fetch_tweets(kw))
+
+                ev["gemini_sentiment"] = analyze_with_gemini(ev["title"], tweets)
+
+            st.write(f"### 🎯 Event Group: {ev['title']}")
+            st.write(f"Similarity Score: `{ev['similarity']:.3f}`")
+
+            for m in ev["markets"]:
+                st.write(f"**{m['question']}**")
+                st.write(f"- Volume: ${float(m['volume']):,.0f}")
+                st.write(f"- End: {m['endDate']}")
+                st.write(f"- Odds: {m['formatted_odds']}")
+
+            st.write("**Public Sentiment (Gemini):**")
+            st.write(ev["gemini_sentiment"])
+
+        # Overall news insight
+        with st.spinner("Creating combined market + sentiment insight..."):
+            insight = overall_news_insight(news, top_events)
+
+        st.success("Combined Insight:")
+        st.write(insight)
