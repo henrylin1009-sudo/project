@@ -12,7 +12,7 @@ GEMINI_API_KEY = st.secrets["GEMINI_API_KEY"]
 TWITTER_API_KEY = st.secrets["TWITTER_API_KEY"]
 
 GEMINI_MODEL = "models/gemini-2.5-flash"
-NEWS_COUNT = 10  # fetch 10 news
+NEWS_COUNT = 5  # fetch 10 news
 POLY_API_URL = "https://gamma-api.polymarket.com/events"
 
 SOURCES = "bloomberg,financial-times,the-wall-street-journal,cnbc,business-insider,forbes,reuters,bbc-news,cnn"
