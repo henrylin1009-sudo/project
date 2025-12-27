@@ -227,7 +227,7 @@ if st.button("Run Analysis"):
             news_with_tweets.append({"news": news, "events": event_groups_with_tweets})
 
     # Keep only top 3 news with meaningful tweets
-    top_news = news_with_tweets[:3]
+    top_news = news_with_tweets[:10]
 
     for i, item in enumerate(top_news, 1):
         st.markdown("---")
