@@ -19,7 +19,7 @@ SOURCES = "bloomberg,financial-times,the-wall-street-journal,cnbc,business-insid
 KEYWORDS = "economy OR finance OR markets OR bitcoin OR crypto OR inflation OR politics"
 
 MAX_PAGES = 5
-SIMILARITY_THRESHOLD = 0.3  # below this, consider event irrelevant
+SIMILARITY_THRESHOLD = 0.2  # below this, consider event irrelevant
 
 model = SentenceTransformer('all-MiniLM-L6-v2')
 
@@ -227,7 +227,7 @@ if st.button("Run Analysis"):
             news_with_tweets.append({"news": news, "events": event_groups_with_tweets})
 
     # Keep only top 3 news with meaningful tweets
-    top_news = news_with_tweets[:10]
+    top_news = news_with_tweets[:3]
 
     for i, item in enumerate(top_news, 1):
         st.markdown("---")
