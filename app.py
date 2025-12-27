@@ -2,7 +2,6 @@ import requests
 import json
 from sentence_transformers import SentenceTransformer, util
 import streamlit as st
-from concurrent.futures import ThreadPoolExecutor
 
 # --------------------------
 # CONFIG
@@ -12,19 +11,19 @@ GEMINI_API_KEY = st.secrets["GEMINI_API_KEY"]
 TWITTER_API_KEY = st.secrets["TWITTER_API_KEY"]
 
 GEMINI_MODEL = "models/gemini-2.5-flash"
-NEWS_COUNT = 10  # fetch 10 news
+NEWS_COUNT = 10
 POLY_API_URL = "https://gamma-api.polymarket.com/events"
 
 SOURCES = "bloomberg,financial-times,the-wall-street-journal,cnbc,business-insider,forbes,reuters,bbc-news,cnn"
 KEYWORDS = "economy OR finance OR markets OR bitcoin OR crypto OR inflation OR politics"
 
 MAX_PAGES = 5
-SIMILARITY_THRESHOLD = 0.2  # ignore irrelevant markets
+SIMILARITY_THRESHOLD = 0.2
 
 model = SentenceTransformer('all-MiniLM-L6-v2')
 
 # ======================================================
-# 1️⃣ NEWS FETCH
+# NEWS FETCH
 # ======================================================
 def get_top_international_news():
     url = "https://newsapi.org/v2/everything"
@@ -40,23 +39,19 @@ def get_top_international_news():
     if r.status_code != 200:
         st.error(f"Error fetching news: {r.status_code}")
         return []
-
     articles = r.json().get("articles", [])
-    news_list = [(a.get("title") or "") + " " + (a.get("description") or "") for a in articles]
-    return news_list
+    return [(a.get("title", "") + " " + a.get("description", "")) for a in articles]
 
 # ======================================================
-# 2️⃣ FETCH POLYMARKET EVENTS
+# POLYMARKET EVENTS FETCH
 # ======================================================
 def fetch_events():
     r = requests.get(POLY_API_URL, params={"closed": "false", "active": "true", "limit": 200})
     if r.status_code != 200:
         st.error(f"Error fetching Polymarket events: {r.status_code}")
         return []
-
     events = r.json()
     cleaned = []
-
     for ev in events:
         active_markets = []
         for m in ev.get("markets", []):
@@ -72,23 +67,20 @@ def fetch_events():
     return cleaned
 
 # ======================================================
-# 3️⃣ SEMANTIC MATCH NEWS → EVENTS
+# MATCH NEWS TO EVENTS
 # ======================================================
-def top_events_for_news(news_text, events, top_k=5):
-    # Precompute event embeddings
-    event_titles = [e["title"] for e in events]
-    event_embeddings = model.encode(event_titles, convert_to_tensor=True)
+def top_events_for_news(news_text, events):
     news_vec = model.encode(news_text, convert_to_tensor=True)
-
-    scores = util.cos_sim(news_vec, event_embeddings)[0]
+    titles = [e["title"] for e in events]
+    vecs = model.encode(titles, convert_to_tensor=True)
+    scores = util.cos_sim(news_vec, vecs)[0]
     for i, ev in enumerate(events):
         ev["similarity"] = float(scores[i])
-
-    relevant_events = [e for e in events if e["similarity"] >= SIMILARITY_THRESHOLD]
-    return sorted(relevant_events, key=lambda x: x["similarity"], reverse=True)[:top_k]
+    relevant = [e for e in events if e["similarity"] >= SIMILARITY_THRESHOLD]
+    return sorted(relevant, key=lambda x: x["similarity"], reverse=True)[:3]
 
 # ======================================================
-# 4️⃣ GEMINI KEYWORD GENERATION
+# GENERATE KEYWORDS FOR TWEETS
 # ======================================================
 def get_keywords_from_market(ev):
     questions_text = " | ".join([m["question"] for m in ev["markets"]])
@@ -107,7 +99,7 @@ Text: {questions_text}
         return []
 
 # ======================================================
-# 5️⃣ FETCH TWEETS (PARALLEL)
+# FETCH TWEETS
 # ======================================================
 def fetch_tweets(keyword):
     cursor = ""
@@ -116,7 +108,7 @@ def fetch_tweets(keyword):
         r = requests.get(
             "https://api.twitterapi.io/twitter/community/get_tweets_from_all_community",
             headers={"X-API-Key": TWITTER_API_KEY},
-            params={"query": keyword, "queryType": "Top", "cursor": cursor},
+            params={"query": keyword, "queryType": "Top", "cursor": cursor}
         ).json()
         batch = r.get("tweets", [])
         if not batch:
@@ -127,16 +119,8 @@ def fetch_tweets(keyword):
         cursor = r.get("next_cursor", "")
     return tweets
 
-def fetch_tweets_parallel(keywords):
-    tweets = []
-    with ThreadPoolExecutor(max_workers=5) as executor:
-        results = executor.map(fetch_tweets, keywords)
-        for r in results:
-            tweets.extend(r)
-    return tweets
-
 # ======================================================
-# 6️⃣ GEMINI SENTIMENT ANALYSIS
+# GEMINI SENTIMENT ANALYSIS
 # ======================================================
 def analyze_with_gemini(question, tweets):
     if not tweets:
@@ -162,7 +146,7 @@ Tweets:
         return "Gemini failed"
 
 # ======================================================
-# 7️⃣ GEMINI OVERALL INSIGHT PER NEWS
+# GEMINI OVERALL INSIGHT PER NEWS
 # ======================================================
 def overall_news_insight(news_text, event_groups):
     summary_lines = []
@@ -172,7 +156,6 @@ def overall_news_insight(news_text, event_groups):
         markets_info = "\n".join([f"{m['question']}\nOdds: {m['formatted_odds']}" for m in ev['markets']])
         sentiment = ev.get("gemini_sentiment", "No analysis")
         summary_lines.append(f"🎯 Event Group: {ev['title']}\nTotal Volume: ${total_volume:,.0f}\nEnd: {end_date}\n{markets_info}\nPublic Sentiment (Gemini):\n{sentiment}\n")
-
     combined_text = f"News: {news_text}\n\n" + "\n".join(summary_lines)
     prompt = f"""
 You are a market analyst. Based on the news and the following event groups (with markets, market odds, and public sentiment analysis):
@@ -190,15 +173,22 @@ Be informative but short.
         return "Gemini failed"
 
 # ======================================================
-# 8️⃣ STREAMLIT APP
+# STREAMLIT APP
 # ======================================================
 st.title("Polymarket News Sentiment Dashboard")
 st.write("Fetch news → match Polymarket events → analyze public sentiment")
 
 if st.button("Run Analysis"):
-    with st.spinner("Fetching news and events..."):
-        news_list = get_top_international_news()
-        events = fetch_events()
+    progress_text = st.empty()
+    progress_bar = st.progress(0)
+
+    progress_text.text("Fetching news...")
+    news_list = get_top_international_news()
+    progress_bar.progress(10)
+
+    progress_text.text("Fetching Polymarket events...")
+    events = fetch_events()
+    progress_bar.progress(20)
 
     if not news_list or not events:
         st.error("No news or events loaded. Check API keys.")
@@ -206,13 +196,17 @@ if st.button("Run Analysis"):
 
     news_with_tweets = []
 
-    for news in news_list:
+    for i, news in enumerate(news_list, 1):
+        progress_text.text(f"Processing news {i}/{len(news_list)}...")
         top_events = top_events_for_news(news, events)
         event_groups_with_tweets = []
 
-        for ev in top_events:
+        for j, ev in enumerate(top_events, 1):
+            progress_text.text(f"Fetching tweets for event {j}/{len(top_events)}: {ev['title']}")
             keywords = get_keywords_from_market(ev)
-            tweets = fetch_tweets_parallel(keywords)
+            tweets = []
+            for kw in keywords:
+                tweets.extend(fetch_tweets(kw))
             sentiment = analyze_with_gemini(ev["title"], tweets)
             if sentiment:  # keep only event groups with tweets
                 ev["gemini_sentiment"] = sentiment
@@ -221,9 +215,14 @@ if st.button("Run Analysis"):
         if event_groups_with_tweets:
             news_with_tweets.append({"news": news, "events": event_groups_with_tweets})
 
-    # Sort news by max event similarity, keep top 3
+        progress_bar.progress(20 + int(70 * i / len(news_list)))
+
+    # Sort news by **highest similarity of their top event**
     news_with_tweets.sort(key=lambda x: max(ev["similarity"] for ev in x["events"]), reverse=True)
     top_news = news_with_tweets[:3]
+
+    progress_text.text("Analysis complete!")
+    progress_bar.progress(100)
 
     for i, item in enumerate(top_news, 1):
         st.markdown("---")
