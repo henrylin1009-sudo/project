@@ -12,14 +12,14 @@ GEMINI_API_KEY = st.secrets["GEMINI_API_KEY"]
 TWITTER_API_KEY = st.secrets["TWITTER_API_KEY"]
 
 GEMINI_MODEL = "models/gemini-2.5-flash"
-NEWS_COUNT = 5  # fetch 10 news
+NEWS_COUNT = 10  # fetch 10 news
 POLY_API_URL = "https://gamma-api.polymarket.com/events"
 
 SOURCES = "bloomberg,financial-times,the-wall-street-journal,cnbc,business-insider,forbes,reuters,bbc-news,cnn"
 KEYWORDS = "economy OR finance OR markets OR bitcoin OR crypto OR inflation OR politics"
 
 MAX_PAGES = 5
-SIMILARITY_THRESHOLD = 0.2  # below this, consider event irrelevant
+SIMILARITY_THRESHOLD = 0.3  # below this, consider event irrelevant
 
 model = SentenceTransformer('all-MiniLM-L6-v2')
 
