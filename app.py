@@ -19,7 +19,7 @@ SOURCES = "bloomberg,financial-times,the-wall-street-journal,cnbc,business-insid
 KEYWORDS = "economy OR finance OR markets OR bitcoin OR crypto OR inflation OR politics"
 
 MAX_PAGES = 5
-SIMILARITY_THRESHOLD = 0.4  # below this, consider event irrelevant
+SIMILARITY_THRESHOLD = 0.3  # below this, consider event irrelevant
 
 model = SentenceTransformer('all-MiniLM-L6-v2')
 
