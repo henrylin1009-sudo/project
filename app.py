@@ -1,8 +1,8 @@
 import requests
-import pandas as pd
 import json
 from sentence_transformers import SentenceTransformer, util
 import streamlit as st
+from concurrent.futures import ThreadPoolExecutor
 
 # --------------------------
 # CONFIG
@@ -19,10 +19,9 @@ SOURCES = "bloomberg,financial-times,the-wall-street-journal,cnbc,business-insid
 KEYWORDS = "economy OR finance OR markets OR bitcoin OR crypto OR inflation OR politics"
 
 MAX_PAGES = 5
-SIMILARITY_THRESHOLD = 0.2  # below this, consider event irrelevant
+SIMILARITY_THRESHOLD = 0.2  # ignore irrelevant markets
 
 model = SentenceTransformer('all-MiniLM-L6-v2')
-
 
 # ======================================================
 # 1️⃣ NEWS FETCH
@@ -43,12 +42,8 @@ def get_top_international_news():
         return []
 
     articles = r.json().get("articles", [])
-    news_list = []
-    for a in articles:
-        text = (a.get("title") or "") + " " + (a.get("description") or "")
-        news_list.append(text)
+    news_list = [(a.get("title") or "") + " " + (a.get("description") or "") for a in articles]
     return news_list
-
 
 # ======================================================
 # 2️⃣ FETCH POLYMARKET EVENTS
@@ -76,28 +71,26 @@ def fetch_events():
             cleaned.append(ev)
     return cleaned
 
-
 # ======================================================
 # 3️⃣ SEMANTIC MATCH NEWS → EVENTS
 # ======================================================
-def top3_events_for_news(news_text, events):
+def top_events_for_news(news_text, events, top_k=5):
+    # Precompute event embeddings
+    event_titles = [e["title"] for e in events]
+    event_embeddings = model.encode(event_titles, convert_to_tensor=True)
     news_vec = model.encode(news_text, convert_to_tensor=True)
-    titles = [e["title"] for e in events]
-    vecs = model.encode(titles, convert_to_tensor=True)
-    scores = util.cos_sim(news_vec, vecs)[0]
 
+    scores = util.cos_sim(news_vec, event_embeddings)[0]
     for i, ev in enumerate(events):
         ev["similarity"] = float(scores[i])
 
     relevant_events = [e for e in events if e["similarity"] >= SIMILARITY_THRESHOLD]
-    return sorted(relevant_events, key=lambda x: x["similarity"], reverse=True)[:3]
-
+    return sorted(relevant_events, key=lambda x: x["similarity"], reverse=True)[:top_k]
 
 # ======================================================
 # 4️⃣ GEMINI KEYWORD GENERATION
 # ======================================================
 def get_keywords_from_market(ev):
-    # Generate keywords from all market questions in the event
     questions_text = " | ".join([m["question"] for m in ev["markets"]])
     url = f"https://generativelanguage.googleapis.com/v1/{GEMINI_MODEL}:generateContent"
     prompt = f"""
@@ -113,19 +106,18 @@ Text: {questions_text}
     except:
         return []
 
-
 # ======================================================
-# 5️⃣ FETCH TWEETS
+# 5️⃣ FETCH TWEETS (PARALLEL)
 # ======================================================
 def fetch_tweets(keyword):
-    url = "https://api.twitterapi.io/twitter/community/get_tweets_from_all_community"
     cursor = ""
     tweets = []
-
     for _ in range(MAX_PAGES):
-        r = requests.get(url,
-                         headers={"X-API-Key": TWITTER_API_KEY},
-                         params={"query": keyword, "queryType": "Top", "cursor": cursor}).json()
+        r = requests.get(
+            "https://api.twitterapi.io/twitter/community/get_tweets_from_all_community",
+            headers={"X-API-Key": TWITTER_API_KEY},
+            params={"query": keyword, "queryType": "Top", "cursor": cursor},
+        ).json()
         batch = r.get("tweets", [])
         if not batch:
             break
@@ -135,6 +127,13 @@ def fetch_tweets(keyword):
         cursor = r.get("next_cursor", "")
     return tweets
 
+def fetch_tweets_parallel(keywords):
+    tweets = []
+    with ThreadPoolExecutor(max_workers=5) as executor:
+        results = executor.map(fetch_tweets, keywords)
+        for r in results:
+            tweets.extend(r)
+    return tweets
 
 # ======================================================
 # 6️⃣ GEMINI SENTIMENT ANALYSIS
@@ -161,7 +160,6 @@ Tweets:
         return r.json()["candidates"][0]["content"]["parts"][0]["text"]
     except:
         return "Gemini failed"
-
 
 # ======================================================
 # 7️⃣ GEMINI OVERALL INSIGHT PER NEWS
@@ -191,7 +189,6 @@ Be informative but short.
     except:
         return "Gemini failed"
 
-
 # ======================================================
 # 8️⃣ STREAMLIT APP
 # ======================================================
@@ -210,14 +207,12 @@ if st.button("Run Analysis"):
     news_with_tweets = []
 
     for news in news_list:
-        top_events = top3_events_for_news(news, events)
+        top_events = top_events_for_news(news, events)
         event_groups_with_tweets = []
 
         for ev in top_events:
             keywords = get_keywords_from_market(ev)
-            tweets = []
-            for kw in keywords:
-                tweets.extend(fetch_tweets(kw))
+            tweets = fetch_tweets_parallel(keywords)
             sentiment = analyze_with_gemini(ev["title"], tweets)
             if sentiment:  # keep only event groups with tweets
                 ev["gemini_sentiment"] = sentiment
@@ -226,7 +221,8 @@ if st.button("Run Analysis"):
         if event_groups_with_tweets:
             news_with_tweets.append({"news": news, "events": event_groups_with_tweets})
 
-    # Keep only top 3 news with meaningful tweets
+    # Sort news by max event similarity, keep top 3
+    news_with_tweets.sort(key=lambda x: max(ev["similarity"] for ev in x["events"]), reverse=True)
     top_news = news_with_tweets[:3]
 
     for i, item in enumerate(top_news, 1):
